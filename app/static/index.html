@@ -104,6 +104,7 @@
           <div class="progress-fill" id="progress-fill"></div>
         </div>
         <p class="progress-text" id="progress-text">0%</p>
+        <button class="btn ghost sm" id="cancel-job-btn">Cancel</button>
       </div>
 
       <!-- ── Error Card ─────────────────────────────────────────── -->
@@ -116,10 +117,16 @@
       <!-- ── Results Card ───────────────────────────────────────── -->
       <div class="card result-card hidden" id="result-card">
         <div class="result-actions">
+          <select id="export-template" class="btn ghost sm">
+            <option value="default">Template: Default</option>
+            <option value="meeting_notes">Template: Meeting Notes</option>
+          </select>
           <button class="btn ghost sm" id="copy-summary-btn">Copy Summary</button>
           <button class="btn ghost sm" id="copy-transcript-btn">Copy Transcript</button>
           <button class="btn ghost sm" id="download-json-btn">Download JSON</button>
           <button class="btn ghost sm" id="download-md-btn">Download MD</button>
+          <button class="btn ghost sm" id="download-pdf-btn">Download PDF</button>
+          <button class="btn ghost sm" id="download-docx-btn">Download DOCX</button>
         </div>
 
         <section class="result-section" id="section-tldr">

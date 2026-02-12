@@ -43,6 +43,7 @@
   const jobStatusLabel = $("#job-status-label");
   const progressFill = $("#progress-fill");
   const progressText = $("#progress-text");
+  const cancelJobBtn = $("#cancel-job-btn");
 
   const errorCard = $("#error-card");
   const errorMessage = $("#error-message");
@@ -60,6 +61,7 @@
 
   const historyList = $("#history-list");
   const emptyHistory = $("#empty-history");
+  const exportTemplate = $("#export-template");
 
   let lastResult = null;
   let lastSource = null;
@@ -79,6 +81,7 @@
     setupStartBtn();
     setupResultActions();
     setupRetryAction();
+    setupCancelAction();
     loadHistory();
     fetchConfig();
   }
@@ -316,6 +319,10 @@
         const msg = data.error?.message || "Processing failed";
         showError(msg);
         retryJobBtn.classList.toggle("hidden", !data.error?.retryable);
+      } else if (data.status === "cancelled") {
+        stopPolling();
+        showError("Job was cancelled");
+        retryJobBtn.classList.add("hidden");
       } else {
         if (typeof data.progress === "number" && (lastProgress === null || data.progress > lastProgress)) {
           pollDelayMs = 2000;
@@ -384,6 +391,22 @@
         errorCard.classList.add("hidden");
         showJobCard(currentJobId, data.status || "queued", 0);
         startPolling(currentJobId);
+      } catch (err) {
+        showError(err.message);
+      }
+    });
+  }
+
+  function setupCancelAction() {
+    cancelJobBtn.addEventListener("click", async () => {
+      if (!currentJobId) return;
+      try {
+        const res = await apiFetch(`/v1/jobs/${currentJobId}/cancel`, { method: "POST" });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Cancel failed");
+        stopPolling();
+        showJobCard(currentJobId, data.status || "cancelled", 0);
+        toast("Job cancellation requested", "success");
       } catch (err) {
         showError(err.message);
       }
@@ -524,7 +547,8 @@
     $("#download-md-btn").addEventListener("click", async () => {
       if (!currentJobId) return;
       try {
-        const res = await apiFetch(`/v1/jobs/${currentJobId}/result.md`);
+        const template = exportTemplate?.value || "default";
+        const res = await apiFetch(`/v1/jobs/${currentJobId}/result.md?template=${encodeURIComponent(template)}`);
         if (!res.ok) throw new Error("Failed to download Markdown");
 
         const blob = await res.blob();
@@ -538,6 +562,44 @@
         a.click();
         URL.revokeObjectURL(url);
         toast("Markdown downloaded!", "success");
+      } catch (err) {
+        showError(err.message);
+      }
+    });
+
+    $("#download-pdf-btn").addEventListener("click", async () => {
+      if (!currentJobId) return;
+      try {
+        const template = exportTemplate?.value || "default";
+        const res = await apiFetch(`/v1/jobs/${currentJobId}/result.pdf?template=${encodeURIComponent(template)}`);
+        if (!res.ok) throw new Error("Failed to download PDF");
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `ai-summary-${currentJobId}.pdf`;
+        a.click();
+        URL.revokeObjectURL(url);
+        toast("PDF downloaded!", "success");
+      } catch (err) {
+        showError(err.message);
+      }
+    });
+
+    $("#download-docx-btn").addEventListener("click", async () => {
+      if (!currentJobId) return;
+      try {
+        const template = exportTemplate?.value || "default";
+        const res = await apiFetch(`/v1/jobs/${currentJobId}/result.docx?template=${encodeURIComponent(template)}`);
+        if (!res.ok) throw new Error("Failed to download DOCX");
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `ai-summary-${currentJobId}.docx`;
+        a.click();
+        URL.revokeObjectURL(url);
+        toast("DOCX downloaded!", "success");
       } catch (err) {
         showError(err.message);
       }
@@ -641,6 +703,9 @@
             showJobCard(h.job_id, "error", statusData.progress);
             showError(statusData.error?.message || "Processing failed");
             retryJobBtn.classList.toggle("hidden", !statusData.error?.retryable);
+          } else if (statusData.status === "cancelled") {
+            showJobCard(h.job_id, "cancelled", statusData.progress || 0);
+            showError("Job was cancelled");
           } else {
             showJobCard(h.job_id, statusData.status, statusData.progress);
             startPolling(h.job_id);

@@ -19,6 +19,10 @@ class YouTubeRequest(BaseModel):
     url: str = Field(..., description="YouTube video URL")
     summary_style: str = Field("medium", pattern="^(short|medium|detailed)$")
     language: str = Field("auto", pattern="^(ru|en|auto)$")
+    callback_url: str | None = Field(
+        default=None,
+        description="Optional webhook URL for async completion notifications",
+    )
 
 
 class JobCreated(BaseModel):
@@ -39,7 +43,7 @@ def submit_youtube(
     job = Job(
         user_id=user.id,
         source_type="youtube",
-        source_meta={"url": body.url},
+        source_meta={"url": body.url, "callback_url": body.callback_url},
         summary_style=body.summary_style,
         language=body.language,
     )

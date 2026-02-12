@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     yt_dlp_cookies_path: str = ""
     yt_dlp_cookies_b64: str = ""
     yt_dlp_player_client: str = "android"
+    yt_dlp_fallback_clients: str = "android,web,ios"
 
     # --- Limits ---
     max_upload_mb: int = 250
@@ -26,6 +27,8 @@ class Settings(BaseSettings):
     max_audio_chunk_seconds: int = 1300  # keep below model hard-limit (1400s)
     upload_blob_ttl_seconds: int = 3600
     cleanup_after_minutes: int = 30
+    callback_timeout_seconds: int = 10
+    callback_retries: int = 2
 
     # --- Auth ---
     secret_key: str = "change-me-in-production"
@@ -39,6 +42,7 @@ class Settings(BaseSettings):
     job_retention_hours: int = 168  # keep done/error jobs for 7 days
     retention_cleanup_interval_seconds: int = 1800
     retention_cleanup_batch_size: int = 200
+    cancel_grace_period_seconds: int = 5
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

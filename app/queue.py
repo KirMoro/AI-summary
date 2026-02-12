@@ -17,6 +17,7 @@ def enqueue_task(func_path: str, job_id: str):
     return q.enqueue(
         func_path,
         job_id,
+        job_id=job_id,
         job_timeout=settings.job_timeout,
         retry=retry,
     )

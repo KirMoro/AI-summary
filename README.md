@@ -98,7 +98,8 @@ curl -X POST https://YOUR-APP.up.railway.app/v1/youtube \
   -d '{
     "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
     "summary_style": "medium",
-    "language": "auto"
+    "language": "auto",
+    "callback_url": "https://your-app.com/webhooks/ai-summary"
   }'
 # → {"job_id": "abc-123-...", "status": "queued"}
 ```
@@ -110,7 +111,8 @@ curl -X POST https://YOUR-APP.up.railway.app/v1/upload \
   -H "X-API-Key: YOUR_API_KEY" \
   -F "file=@recording.mp3" \
   -F "summary_style=detailed" \
-  -F "language=ru"
+  -F "language=ru" \
+  -F "callback_url=https://your-app.com/webhooks/ai-summary"
 # → {"job_id": "def-456-...", "status": "queued"}
 ```
 
@@ -148,8 +150,22 @@ curl https://YOUR-APP.up.railway.app/v1/jobs/JOB_ID/result.md \
   -H "X-API-Key: YOUR_API_KEY" \
   -o ai-summary-result.md
 
+# Скачать PDF
+curl https://YOUR-APP.up.railway.app/v1/jobs/JOB_ID/result.pdf?template=default \
+  -H "X-API-Key: YOUR_API_KEY" \
+  -o ai-summary-result.pdf
+
+# Скачать DOCX
+curl https://YOUR-APP.up.railway.app/v1/jobs/JOB_ID/result.docx?template=meeting_notes \
+  -H "X-API-Key: YOUR_API_KEY" \
+  -o ai-summary-result.docx
+
 # Retry failed job
 curl -X POST https://YOUR-APP.up.railway.app/v1/jobs/JOB_ID/retry \
+  -H "X-API-Key: YOUR_API_KEY"
+
+# Cancel queued/running job
+curl -X POST https://YOUR-APP.up.railway.app/v1/jobs/JOB_ID/cancel \
   -H "X-API-Key: YOUR_API_KEY"
 ```
 
@@ -182,6 +198,9 @@ Railway автоматически создаст `REDIS_URL`.
 | `YTDLP_COOKIES_PATH` | `/app/secrets/youtube_cookies.txt` | optional |
 | `YTDLP_COOKIES_B64` | base64(cookies.txt) | optional |
 | `YTDLP_PLAYER_CLIENT` | `android` | optional |
+| `YTDLP_FALLBACK_CLIENTS` | `android,web,ios` | optional |
+| `CALLBACK_TIMEOUT_SECONDS` | `10` | optional |
+| `CALLBACK_RETRIES` | `2` | optional |
 
 ### Supabase DATABASE_URL
 
@@ -234,8 +253,11 @@ rq worker --url redis://localhost:6379/0 default
 | `YTDLP_COOKIES_PATH` | Путь к cookies.txt для yt-dlp | `""` |
 | `YTDLP_COOKIES_B64` | base64-содержимое cookies.txt | `""` |
 | `YTDLP_PLAYER_CLIENT` | youtube player_client для yt-dlp | `android` |
+| `YTDLP_FALLBACK_CLIENTS` | fallback цепочка клиентов yt-dlp | `android,web,ios` |
 | `MAX_AUDIO_CHUNK_MB` | Макс. размер чанка для OpenAI | `24` |
 | `JOB_TIMEOUT` | Таймаут задачи (сек) | `1800` |
+| `CALLBACK_TIMEOUT_SECONDS` | Таймаут webhook callback (сек) | `10` |
+| `CALLBACK_RETRIES` | Количество повторов callback | `2` |
 | `AUTH_RATE_LIMIT_PER_MINUTE` | Лимит auth-запросов/мин/IP | `20` |
 | `JOB_SUBMIT_RATE_LIMIT_PER_MINUTE` | Лимит submit/retry/мин/IP | `30` |
 | `JOB_MAX_RETRIES` | Авто-retry задач в RQ | `2` |

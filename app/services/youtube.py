@@ -181,18 +181,23 @@ def download_audio(url: str) -> str:
     out_name = f"yt_{uuid.uuid4().hex}"
     out_template = os.path.join(tmp_dir, out_name + ".%(ext)s")
 
-    cmd = _yt_dlp_base_cmd() + [
-        "-x",
-        "--audio-format", "mp3",
-        "--audio-quality", "5",  # VBR ~130 kbps – good balance
-        "--no-playlist",
-        "--no-warnings",
-        "-o", out_template,
-        url,
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-    if result.returncode != 0:
-        _raise_yt_dlp_error(result.stderr)
+    errors = []
+    for client in _iter_player_clients():
+        cmd = _yt_dlp_base_cmd(player_client=client) + [
+            "-x",
+            "--audio-format", "mp3",
+            "--audio-quality", "5",  # VBR ~130 kbps – good balance
+            "--no-playlist",
+            "--no-warnings",
+            "-o", out_template,
+            url,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        if result.returncode == 0:
+            break
+        errors.append(f"{client}: {result.stderr[:300]}")
+    else:
+        _raise_yt_dlp_error("\n".join(errors))
 
     # Find the output file
     for fname in os.listdir(tmp_dir):
@@ -202,14 +207,30 @@ def download_audio(url: str) -> str:
     raise FileNotFoundError("yt-dlp produced no output file")
 
 
-def _yt_dlp_base_cmd() -> list[str]:
+def _iter_player_clients() -> list[str]:
+    raw = settings.yt_dlp_fallback_clients or settings.yt_dlp_player_client or "android"
+    clients = [c.strip() for c in raw.split(",") if c.strip()]
+    if settings.yt_dlp_player_client and settings.yt_dlp_player_client not in clients:
+        clients.insert(0, settings.yt_dlp_player_client)
+    # Keep order, unique only
+    seen = set()
+    out = []
+    for c in clients:
+        if c not in seen:
+            out.append(c)
+            seen.add(c)
+    return out or ["android"]
+
+
+def _yt_dlp_base_cmd(player_client: str | None = None) -> list[str]:
     """Base yt-dlp args with optional anti-bot mitigations from settings."""
     global _COOKIES_CACHE_PATH
 
     cmd = ["yt-dlp"]
 
-    if settings.yt_dlp_player_client:
-        cmd.extend(["--extractor-args", f"youtube:player_client={settings.yt_dlp_player_client}"])
+    chosen_client = player_client or settings.yt_dlp_player_client
+    if chosen_client:
+        cmd.extend(["--extractor-args", f"youtube:player_client={chosen_client}"])
 
     cookies_path = (settings.yt_dlp_cookies_path or "").strip()
     if not cookies_path:

@@ -7,7 +7,9 @@ import re
 import tempfile
 import traceback
 from datetime import datetime, timezone, timedelta
+from typing import Optional
 
+import httpx
 import structlog
 from redis import Redis
 
@@ -32,6 +34,14 @@ def _update_job(job_id: str, **kwargs):
             setattr(job, k, v)
         job.updated_at = datetime.now(timezone.utc)
         db.commit()
+    finally:
+        db.close()
+
+
+def _get_job(job_id: str) -> Optional[Job]:
+    db = SessionLocal()
+    try:
+        return db.query(Job).filter(Job.id == job_id).first()
     finally:
         db.close()
 
@@ -151,6 +161,55 @@ def _job_error_payload(exc: Exception) -> dict:
     }
 
 
+def _ensure_not_cancelled(job_id: str) -> None:
+    job = _get_job(job_id)
+    if job and job.status in ("cancel_requested", "cancelled"):
+        raise RuntimeError("cancel_requested")
+
+
+def _build_callback_payload(job: Job) -> dict:
+    payload = {
+        "job_id": str(job.id),
+        "status": job.status,
+        "progress": job.progress,
+        "source_type": job.source_type,
+        "source_meta": job.source_meta,
+        "error": job.error,
+    }
+    if job.status == "done":
+        payload["result"] = {
+            "source": job.source_meta,
+            "transcript": job.transcript,
+            "summary": job.summary,
+        }
+    return payload
+
+
+def _notify_callback(job_id: str) -> None:
+    job = _get_job(job_id)
+    if not job:
+        return
+    callback_url = (job.source_meta or {}).get("callback_url")
+    if not callback_url:
+        return
+
+    payload = _build_callback_payload(job)
+    timeout = settings.callback_timeout_seconds
+    retries = settings.callback_retries
+    with httpx.Client(timeout=timeout) as client:
+        last_error = None
+        for _ in range(retries + 1):
+            try:
+                resp = client.post(callback_url, json=payload)
+                if 200 <= resp.status_code < 300:
+                    log.info("callback_sent", job_id=job_id, callback_url=callback_url)
+                    return
+                last_error = f"status={resp.status_code}"
+            except Exception as exc:
+                last_error = str(exc)
+        log.warning("callback_failed", job_id=job_id, callback_url=callback_url, error=last_error)
+
+
 def _maybe_run_retention_cleanup() -> None:
     """Periodically remove old completed/failed jobs and normalize upload blob TTLs."""
     conn = Redis.from_url(settings.redis_url)
@@ -219,6 +278,7 @@ def process_youtube(job_id: str):
     try:
         _maybe_run_retention_cleanup()
         _update_job(job_id, status="running", progress=5)
+        _ensure_not_cancelled(job_id)
 
         # 1. Load job from DB
         db = SessionLocal()
@@ -227,13 +287,17 @@ def process_youtube(job_id: str):
             log.error("job_not_found", job_id=job_id)
             return
         url = job.source_meta.get("url", "")
+        callback_url = job.source_meta.get("callback_url")
         summary_style = job.summary_style or "medium"
         language = job.language or "auto"
         db.close()
 
         # 2. Metadata
         meta = yt_svc.get_metadata(url)
-        _update_job(job_id, source_meta=meta.to_dict(), progress=10)
+        meta_dict = meta.to_dict()
+        if callback_url:
+            meta_dict["callback_url"] = callback_url
+        _update_job(job_id, source_meta=meta_dict, progress=10)
         log.info("metadata_fetched", title=meta.title)
 
         # 3. Try captions
@@ -258,6 +322,7 @@ def process_youtube(job_id: str):
             audio_path = yt_svc.download_audio(url)
             log.info("audio_downloaded", path=audio_path)
             _update_job(job_id, progress=25)
+            _ensure_not_cancelled(job_id)
 
             # 5. Transcribe
             result = tr_svc.transcribe_file(
@@ -277,6 +342,7 @@ def process_youtube(job_id: str):
         # 7. Summarize
         log.info("summarizing", style=summary_style, lang=language)
         _update_job(job_id, progress=85)
+        _ensure_not_cancelled(job_id)
 
         summary = sm_svc.generate_summary(
             text=transcript_data["text"],
@@ -291,6 +357,13 @@ def process_youtube(job_id: str):
         log.info("youtube_job_done", job_id=job_id)
 
     except Exception as exc:
+        if str(exc) == "cancel_requested":
+            _update_job(
+                job_id,
+                status="cancelled",
+                error={"code": "cancelled", "message": "Cancelled by user", "retryable": False},
+            )
+            return
         log.error("youtube_job_error", job_id=job_id, error=str(exc),
                   traceback=traceback.format_exc())
         _update_job(
@@ -300,6 +373,7 @@ def process_youtube(job_id: str):
         )
     finally:
         _safe_remove(audio_path)
+        _notify_callback(job_id)
 
 
 # ── Upload task ──────────────────────────────────────────────────────────────
@@ -312,10 +386,12 @@ def process_upload(job_id: str):
 
     log.info("upload_job_start", job_id=job_id)
     converted_path = None
+    redis_blob_key = ""
 
     try:
         _maybe_run_retention_cleanup()
         _update_job(job_id, status="running", progress=5)
+        _ensure_not_cancelled(job_id)
 
         # 1. Load job
         db = SessionLocal()
@@ -338,6 +414,7 @@ def process_upload(job_id: str):
             raise FileNotFoundError(f"Uploaded file not found: {tmp_path}")
 
         _update_job(job_id, progress=15)
+        _ensure_not_cancelled(job_id)
 
         # 2. Transcribe (handles conversion internally)
         log.info("transcribing_upload", path=tmp_path)
@@ -367,6 +444,7 @@ def process_upload(job_id: str):
         # 4. Summarize
         log.info("summarizing_upload", style=summary_style, lang=language)
         _update_job(job_id, progress=85)
+        _ensure_not_cancelled(job_id)
 
         summary = sm_svc.generate_summary(
             text=transcript_data["text"],
@@ -381,6 +459,8 @@ def process_upload(job_id: str):
             "filename": job.source_meta.get("filename"),
             "size_bytes": job.source_meta.get("size_bytes"),
         }
+        if job.source_meta.get("callback_url"):
+            clean_meta["callback_url"] = job.source_meta.get("callback_url")
         _update_job(
             job_id,
             source_meta=clean_meta,
@@ -391,6 +471,13 @@ def process_upload(job_id: str):
         log.info("upload_job_done", job_id=job_id)
 
     except Exception as exc:
+        if str(exc) == "cancel_requested":
+            _update_job(
+                job_id,
+                status="cancelled",
+                error={"code": "cancelled", "message": "Cancelled by user", "retryable": False},
+            )
+            return
         log.error("upload_job_error", job_id=job_id, error=str(exc),
                   traceback=traceback.format_exc())
         _update_job(
@@ -405,9 +492,10 @@ def process_upload(job_id: str):
             job = db.query(Job).filter(Job.id == job_id).first()
             if job and job.source_meta:
                 _safe_remove(job.source_meta.get("tmp_path"))
-                blob_key = job.source_meta.get("redis_blob_key")
+                blob_key = redis_blob_key or job.source_meta.get("redis_blob_key")
                 if blob_key:
                     Redis.from_url(settings.redis_url).delete(blob_key)
             db.close()
         except Exception:
             pass
+        _notify_callback(job_id)
