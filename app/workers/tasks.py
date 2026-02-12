@@ -82,6 +82,52 @@ def _estimate_segments_from_text(text: str, duration_seconds: float) -> list[dic
     return segments
 
 
+def _classify_error(exc: Exception) -> dict:
+    msg = str(exc)
+    low = msg.lower()
+
+    if "not a bot" in low or "yt-dlp was blocked" in low or "cookies" in low:
+        return {
+            "code": "youtube_auth_required",
+            "retryable": False,
+            "user_message": "YouTube requires valid cookies for this video. Please update YTDLP cookies and retry.",
+        }
+    if "audio duration" in low and "maximum for this model" in low:
+        return {
+            "code": "audio_too_long_for_model",
+            "retryable": True,
+            "user_message": "Audio chunk exceeded model duration limits. Please retry.",
+        }
+    if "rate limit" in low or "429" in low:
+        return {
+            "code": "upstream_rate_limited",
+            "retryable": True,
+            "user_message": "Upstream service rate-limited the request. Please retry shortly.",
+        }
+    if "timeout" in low or "timed out" in low:
+        return {
+            "code": "upstream_timeout",
+            "retryable": True,
+            "user_message": "Processing timed out. Please retry.",
+        }
+    return {
+        "code": "processing_failed",
+        "retryable": False,
+        "user_message": msg[:300] or "Processing failed.",
+    }
+
+
+def _job_error_payload(exc: Exception) -> dict:
+    cls = _classify_error(exc)
+    return {
+        "code": cls["code"],
+        "retryable": cls["retryable"],
+        "message": cls["user_message"],
+        "debug_message": str(exc)[:600],
+        "detail": traceback.format_exc()[:2000],
+    }
+
+
 # ── YouTube task ─────────────────────────────────────────────────────────────
 
 
@@ -173,7 +219,7 @@ def process_youtube(job_id: str):
         _update_job(
             job_id,
             status="error",
-            error={"message": str(exc), "detail": traceback.format_exc()[:2000]},
+            error=_job_error_payload(exc),
         )
     finally:
         _safe_remove(audio_path)
@@ -266,7 +312,7 @@ def process_upload(job_id: str):
         _update_job(
             job_id,
             status="error",
-            error={"message": str(exc), "detail": traceback.format_exc()[:2000]},
+            error=_job_error_payload(exc),
         )
     finally:
         # Cleanup uploaded file

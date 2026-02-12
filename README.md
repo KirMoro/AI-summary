@@ -40,7 +40,7 @@ AI-summary/
 │   ├── main.py                 # FastAPI приложение
 │   ├── config.py               # Настройки (env vars)
 │   ├── api/
-│   │   ├── auth.py             # POST /v1/auth/register, /login
+│   │   ├── auth.py             # POST /v1/auth/register, /login, /rotate-key
 │   │   ├── youtube.py          # POST /v1/youtube
 │   │   ├── upload.py           # POST /v1/upload
 │   │   ├── jobs.py             # GET /v1/jobs/{id}, /result
@@ -60,7 +60,8 @@ AI-summary/
 │       └── app.js
 ├── Dockerfile
 ├── docker-compose.yml          # Локально (только Redis)
-├── start.sh                    # Entrypoint (web + worker)
+├── start.sh                    # Entrypoint (web)
+├── worker.sh                   # Entrypoint (RQ worker)
 ├── railway.toml
 ├── Procfile
 ├── requirements.txt
@@ -82,6 +83,10 @@ curl -X POST https://YOUR-APP.up.railway.app/v1/auth/register \
 curl -X POST https://YOUR-APP.up.railway.app/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username": "myuser", "password": "mypass123"}'
+
+# Ротация API ключа
+curl -X POST https://YOUR-APP.up.railway.app/v1/auth/rotate-key \
+  -H "X-API-Key: YOUR_API_KEY"
 ```
 
 ### YouTube → Summary
@@ -117,6 +122,10 @@ curl https://YOUR-APP.up.railway.app/v1/jobs/JOB_ID \
   -H "X-API-Key: YOUR_API_KEY"
 # → {"job_id": "...", "status": "running", "progress": 45, ...}
 
+# История задач (backend)
+curl "https://YOUR-APP.up.railway.app/v1/jobs?limit=20&offset=0" \
+  -H "X-API-Key: YOUR_API_KEY"
+
 # Результат (когда status=done)
 curl https://YOUR-APP.up.railway.app/v1/jobs/JOB_ID/result \
   -H "X-API-Key: YOUR_API_KEY"
@@ -138,6 +147,10 @@ curl https://YOUR-APP.up.railway.app/v1/jobs/JOB_ID/result \
 curl https://YOUR-APP.up.railway.app/v1/jobs/JOB_ID/result.md \
   -H "X-API-Key: YOUR_API_KEY" \
   -o ai-summary-result.md
+
+# Retry failed job
+curl -X POST https://YOUR-APP.up.railway.app/v1/jobs/JOB_ID/retry \
+  -H "X-API-Key: YOUR_API_KEY"
 ```
 
 ## Деплой на Railway
@@ -181,9 +194,13 @@ Railway автоматически создаст `REDIS_URL`.
 
 Найти: Supabase Dashboard → Settings → Database → Connection string → URI (Transaction pooler, порт 6543).
 
-### 4. Deploy
+### 4. Deploy (раздельно web и worker)
 
-Railway автоматически подхватит `Dockerfile` + `railway.toml`. Один деплой запускает и web-сервер, и RQ worker.
+Используй 2 сервиса Railway из одного репо:
+- `web` service: `Start Command = bash start.sh`
+- `worker` service: `Start Command = bash worker.sh`
+
+Оба сервиса должны видеть одинаковые env vars (`DATABASE_URL`, `REDIS_URL`, `OPENAI_API_KEY`, ...).
 
 ## Локальная разработка
 
@@ -218,6 +235,9 @@ rq worker --url redis://localhost:6379/0 default
 | `YTDLP_PLAYER_CLIENT` | youtube player_client для yt-dlp | `android` |
 | `MAX_AUDIO_CHUNK_MB` | Макс. размер чанка для OpenAI | `24` |
 | `JOB_TIMEOUT` | Таймаут задачи (сек) | `1800` |
+| `AUTH_RATE_LIMIT_PER_MINUTE` | Лимит auth-запросов/мин/IP | `20` |
+| `JOB_SUBMIT_RATE_LIMIT_PER_MINUTE` | Лимит submit/retry/мин/IP | `30` |
+| `JOB_MAX_RETRIES` | Авто-retry задач в RQ | `2` |
 
 ## Тесты
 

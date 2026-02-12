@@ -6,15 +6,16 @@ import tempfile
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
-from redis import Redis
-from rq import Queue
 
+from app.api.rate_limit import rate_limit
 from app.config import settings
 from app.db.database import get_db
 from app.db.models import Job, User
 from app.api.deps import get_current_user
+from app.queue import enqueue_task
 
 router = APIRouter(prefix="/v1", tags=["upload"])
+submit_limiter = rate_limit(settings.job_submit_rate_limit_per_minute, 60, "submit")
 
 ALLOWED_EXTENSIONS = {
     ".mp3", ".mp4", ".m4a", ".wav", ".ogg", ".webm", ".flac",
@@ -27,6 +28,7 @@ def upload_file(
     file: UploadFile = File(...),
     summary_style: str = Form("medium"),
     language: str = Form("auto"),
+    _: None = Depends(submit_limiter),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -69,12 +71,6 @@ def upload_file(
     db.commit()
     db.refresh(job)
 
-    conn = Redis.from_url(settings.redis_url)
-    q = Queue(settings.rq_queue_name, connection=conn)
-    q.enqueue(
-        "app.workers.tasks.process_upload",
-        str(job.id),
-        job_timeout=settings.job_timeout,
-    )
+    enqueue_task("app.workers.tasks.process_upload", str(job.id))
 
     return {"job_id": str(job.id), "status": job.status}

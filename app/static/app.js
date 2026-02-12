@@ -43,6 +43,7 @@
 
   const errorCard = $("#error-card");
   const errorMessage = $("#error-message");
+  const retryJobBtn = $("#retry-job-btn");
 
   const resultCard = $("#result-card");
   const tldrText = $("#tldr-text");
@@ -74,6 +75,7 @@
     setupDropZone();
     setupStartBtn();
     setupResultActions();
+    setupRetryAction();
     loadHistory();
     fetchConfig();
   }
@@ -302,6 +304,7 @@
         stopPolling();
         const msg = data.error?.message || "Processing failed";
         showError(msg);
+        retryJobBtn.classList.toggle("hidden", !data.error?.retryable);
       }
     } catch (err) {
       stopPolling();
@@ -329,6 +332,7 @@
   function hideCards() {
     jobCard.classList.add("hidden");
     errorCard.classList.add("hidden");
+    retryJobBtn.classList.add("hidden");
     resultCard.classList.add("hidden");
   }
 
@@ -344,6 +348,23 @@
   function showError(msg) {
     errorCard.classList.remove("hidden");
     errorMessage.textContent = msg;
+  }
+
+  function setupRetryAction() {
+    retryJobBtn.addEventListener("click", async () => {
+      if (!currentJobId) return;
+      try {
+        const res = await apiFetch(`/v1/jobs/${currentJobId}/retry`, { method: "POST" });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Retry failed");
+        retryJobBtn.classList.add("hidden");
+        errorCard.classList.add("hidden");
+        showJobCard(currentJobId, data.status || "queued", 0);
+        startPolling(currentJobId);
+      } catch (err) {
+        showError(err.message);
+      }
+    });
   }
 
   // ── Render Result ──────────────────────────────────────────────────────
@@ -529,22 +550,35 @@
 
   function saveHistory(jobId, sourceMeta) {
     let history = getHistory();
-    const entry = {
+    history = history.filter((h) => h.job_id !== jobId);
+    history.unshift({
       job_id: jobId,
       source: sourceMeta?.title || sourceMeta?.filename || sourceMeta?.url || "Unknown",
       type: sourceMeta?.video_id ? "youtube" : "upload",
       created_at: new Date().toISOString(),
-    };
-    // Deduplicate
-    history = history.filter((h) => h.job_id !== jobId);
-    history.unshift(entry);
-    history = history.slice(0, 5);
-    localStorage.setItem("job_history", JSON.stringify(history));
+    });
+    localStorage.setItem("job_history", JSON.stringify(history.slice(0, 10)));
     loadHistory();
   }
 
-  function loadHistory() {
-    const history = getHistory();
+  async function loadHistory() {
+    let history = [];
+    if (apiKey) {
+      try {
+        const res = await apiFetch("/v1/jobs?limit=20&offset=0");
+        if (res.ok) {
+          const data = await res.json();
+          history = (data.items || []).map((it) => ({
+            job_id: it.job_id,
+            source: it.source_meta?.title || it.source_meta?.filename || it.source_meta?.url || "Unknown",
+            type: it.source_type || (it.source_meta?.video_id ? "youtube" : "upload"),
+            created_at: it.created_at || new Date().toISOString(),
+          }));
+        }
+      } catch {}
+    }
+    if (!history.length) history = getHistory();
+
     historyList.innerHTML = "";
 
     if (!history.length) {
@@ -570,6 +604,7 @@
 
       div.addEventListener("click", async () => {
         hideCards();
+        currentJobId = h.job_id;
         try {
           // First check status
           const statusRes = await apiFetch(`/v1/jobs/${h.job_id}`);
@@ -582,6 +617,7 @@
           } else if (statusData.status === "error") {
             showJobCard(h.job_id, "error", statusData.progress);
             showError(statusData.error?.message || "Processing failed");
+            retryJobBtn.classList.toggle("hidden", !statusData.error?.retryable);
           } else {
             showJobCard(h.job_id, statusData.status, statusData.progress);
             startPolling(h.job_id);

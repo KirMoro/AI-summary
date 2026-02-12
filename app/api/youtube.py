@@ -3,15 +3,16 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from redis import Redis
-from rq import Queue
 
+from app.api.rate_limit import rate_limit
 from app.config import settings
 from app.db.database import get_db
 from app.db.models import Job, User
 from app.api.deps import get_current_user
+from app.queue import enqueue_task
 
 router = APIRouter(prefix="/v1", tags=["youtube"])
+submit_limiter = rate_limit(settings.job_submit_rate_limit_per_minute, 60, "submit")
 
 
 class YouTubeRequest(BaseModel):
@@ -28,6 +29,7 @@ class JobCreated(BaseModel):
 @router.post("/youtube", response_model=JobCreated)
 def submit_youtube(
     body: YouTubeRequest,
+    _: None = Depends(submit_limiter),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -45,13 +47,6 @@ def submit_youtube(
     db.commit()
     db.refresh(job)
 
-    # Enqueue background task
-    conn = Redis.from_url(settings.redis_url)
-    q = Queue(settings.rq_queue_name, connection=conn)
-    q.enqueue(
-        "app.workers.tasks.process_youtube",
-        str(job.id),
-        job_timeout=settings.job_timeout,
-    )
+    enqueue_task("app.workers.tasks.process_youtube", str(job.id))
 
     return JobCreated(job_id=str(job.id), status=job.status)

@@ -11,7 +11,7 @@ os.environ.setdefault("OPENAI_API_KEY", "test-key")
 from fastapi.testclient import TestClient
 from app.main import app
 from app.db.database import engine
-from app.db.models import Base
+from app.db.models import Base, Job
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -77,6 +77,17 @@ class TestAuth:
         })
         assert r.status_code == 401
 
+    def test_rotate_key(self):
+        login = client.post("/v1/auth/login", json={
+            "username": "testuser",
+            "password": "testpass123",
+        })
+        old_key = login.json()["api_key"]
+        r = client.post("/v1/auth/rotate-key", headers={"X-API-Key": old_key})
+        assert r.status_code == 200
+        new_key = r.json()["api_key"]
+        assert new_key != old_key
+
 
 class TestYouTubeEndpoint:
     def _get_key(self):
@@ -120,3 +131,38 @@ class TestJobsEndpoint:
         r = client.get("/v1/jobs/config")
         assert r.status_code == 200
         assert "max_upload_mb" in r.json()
+
+    def test_list_jobs(self):
+        key = self._get_key()
+        r = client.get("/v1/jobs?limit=10&offset=0", headers={"X-API-Key": key})
+        assert r.status_code == 200
+        assert "items" in r.json()
+
+    def test_retry_failed_job(self, monkeypatch):
+        key = self._get_key()
+        monkeypatch.setattr("app.api.jobs.enqueue_task", lambda *args, **kwargs: None)
+
+        # Create a failed job directly for retry endpoint
+        from app.db.database import SessionLocal
+        db = SessionLocal()
+        try:
+            from app.db.models import User
+            user = db.query(User).filter(User.username == "testuser").first()
+            job = Job(
+                user_id=user.id,
+                source_type="youtube",
+                source_meta={"url": "https://www.youtube.com/watch?v=test"},
+                summary_style="medium",
+                language="auto",
+                status="error",
+                error={"message": "failed"},
+            )
+            db.add(job)
+            db.commit()
+            db.refresh(job)
+            job_id = str(job.id)
+        finally:
+            db.close()
+
+        r = client.post(f"/v1/jobs/{job_id}/retry", headers={"X-API-Key": key})
+        assert r.status_code == 200

@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Make start script executable
-RUN chmod +x start.sh
+RUN chmod +x start.sh worker.sh
 
 EXPOSE 8000
 

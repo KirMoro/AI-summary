@@ -28,10 +28,13 @@ class Settings(BaseSettings):
 
     # --- Auth ---
     secret_key: str = "change-me-in-production"
+    auth_rate_limit_per_minute: int = 20
+    job_submit_rate_limit_per_minute: int = 30
 
     # --- Worker ---
     rq_queue_name: str = "default"
     job_timeout: int = 1800  # 30 min
+    job_max_retries: int = 2
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 
