@@ -166,6 +166,9 @@ Railway автоматически создаст `REDIS_URL`.
 | `TRANSCRIBE_MODEL` | `gpt-4o-transcribe` | default |
 | `SUMMARY_MODEL` | `gpt-4o-mini` | default |
 | `MAX_UPLOAD_MB` | `250` | default |
+| `YTDLP_COOKIES_PATH` | `/app/secrets/youtube_cookies.txt` | optional |
+| `YTDLP_COOKIES_B64` | base64(cookies.txt) | optional |
+| `YTDLP_PLAYER_CLIENT` | `android` | optional |
 
 ### Supabase DATABASE_URL
 
@@ -209,6 +212,9 @@ rq worker --url redis://localhost:6379/0 default
 | `TRANSCRIBE_MODEL` | Модель транскрипции | `gpt-4o-transcribe` |
 | `SUMMARY_MODEL` | Модель саммари | `gpt-4o-mini` |
 | `MAX_UPLOAD_MB` | Макс. размер файла | `250` |
+| `YTDLP_COOKIES_PATH` | Путь к cookies.txt для yt-dlp | `""` |
+| `YTDLP_COOKIES_B64` | base64-содержимое cookies.txt | `""` |
+| `YTDLP_PLAYER_CLIENT` | youtube player_client для yt-dlp | `android` |
 | `MAX_AUDIO_CHUNK_MB` | Макс. размер чанка для OpenAI | `24` |
 | `JOB_TIMEOUT` | Таймаут задачи (сек) | `1800` |
 

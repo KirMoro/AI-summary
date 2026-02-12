@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     transcribe_model: str = "gpt-4o-transcribe"
     summary_model: str = "gpt-4o-mini"
 
+    # --- YouTube / yt-dlp ---
+    yt_dlp_cookies_path: str = ""
+    yt_dlp_cookies_b64: str = ""
+    yt_dlp_player_client: str = "android"
+
     # --- Limits ---
     max_upload_mb: int = 250
     max_audio_chunk_mb: int = 24  # OpenAI limit ≈ 25 MB

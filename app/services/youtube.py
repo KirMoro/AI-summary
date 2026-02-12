@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -14,6 +15,7 @@ from typing import Optional
 import structlog
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api._errors import NoTranscriptFound, TranscriptsDisabled
+from app.config import settings
 
 try:
     # Present in some youtube-transcript-api versions
@@ -23,6 +25,7 @@ except ImportError:
     _NO_TRANSCRIPT_ERRORS = (TranscriptsDisabled,)
 
 log = structlog.get_logger()
+_COOKIES_CACHE_PATH: Optional[str] = None
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -75,8 +78,7 @@ class CaptionResult:
 def get_metadata(url: str) -> VideoMeta:
     """Fetch video metadata using yt-dlp (no download)."""
     video_id = extract_video_id(url)
-    cmd = [
-        "yt-dlp",
+    cmd = _yt_dlp_base_cmd() + [
         "--dump-json",
         "--no-download",
         "--no-warnings",
@@ -179,8 +181,7 @@ def download_audio(url: str) -> str:
     out_name = f"yt_{uuid.uuid4().hex}"
     out_template = os.path.join(tmp_dir, out_name + ".%(ext)s")
 
-    cmd = [
-        "yt-dlp",
+    cmd = _yt_dlp_base_cmd() + [
         "-x",
         "--audio-format", "mp3",
         "--audio-quality", "5",  # VBR ~130 kbps – good balance
@@ -191,7 +192,7 @@ def download_audio(url: str) -> str:
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     if result.returncode != 0:
-        raise RuntimeError(f"yt-dlp download failed: {result.stderr[:500]}")
+        _raise_yt_dlp_error(result.stderr)
 
     # Find the output file
     for fname in os.listdir(tmp_dir):
@@ -199,3 +200,47 @@ def download_audio(url: str) -> str:
             return os.path.join(tmp_dir, fname)
 
     raise FileNotFoundError("yt-dlp produced no output file")
+
+
+def _yt_dlp_base_cmd() -> list[str]:
+    """Base yt-dlp args with optional anti-bot mitigations from settings."""
+    global _COOKIES_CACHE_PATH
+
+    cmd = ["yt-dlp"]
+
+    if settings.yt_dlp_player_client:
+        cmd.extend(["--extractor-args", f"youtube:player_client={settings.yt_dlp_player_client}"])
+
+    cookies_path = (settings.yt_dlp_cookies_path or "").strip()
+    if not cookies_path:
+        b64 = (settings.yt_dlp_cookies_b64 or "").strip()
+        if b64:
+            if not _COOKIES_CACHE_PATH:
+                try:
+                    raw = base64.b64decode(b64).decode("utf-8")
+                    tmp_path = os.path.join(tempfile.gettempdir(), "yt_cookies.txt")
+                    with open(tmp_path, "w", encoding="utf-8") as f:
+                        f.write(raw)
+                    _COOKIES_CACHE_PATH = tmp_path
+                except Exception as exc:
+                    raise RuntimeError(
+                        "Invalid YTDLP_COOKIES_B64 value; expected base64-encoded cookies.txt content."
+                    ) from exc
+            cookies_path = _COOKIES_CACHE_PATH
+
+    if cookies_path:
+        cmd.extend(["--cookies", cookies_path])
+
+    return cmd
+
+
+def _raise_yt_dlp_error(stderr: str) -> None:
+    err = (stderr or "")[:1000]
+    anti_bot = "Sign in to confirm you’re not a bot" in err or "Use --cookies" in err
+    if anti_bot:
+        raise RuntimeError(
+            "yt-dlp was blocked by YouTube anti-bot checks. "
+            "Set YTDLP_COOKIES_PATH to a valid cookies.txt file and redeploy. "
+            f"Details: {err[:500]}"
+        )
+    raise RuntimeError(f"yt-dlp download failed: {err[:500]}")
