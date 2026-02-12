@@ -8,12 +8,8 @@ from datetime import datetime, timezone
 
 import structlog
 
-from app.config import settings
 from app.db.database import SessionLocal
 from app.db.models import Job
-from app.services import youtube as yt_svc
-from app.services import transcribe as tr_svc
-from app.services import summarize as sm_svc
 
 log = structlog.get_logger()
 
@@ -56,6 +52,10 @@ def _safe_remove(path: str):
 
 def process_youtube(job_id: str):
     """Full pipeline: YouTube URL → captions/audio → transcript → summary."""
+    from app.services import summarize as sm_svc
+    from app.services import transcribe as tr_svc
+    from app.services import youtube as yt_svc
+
     log.info("youtube_job_start", job_id=job_id)
     audio_path = None
 
@@ -149,6 +149,9 @@ def process_youtube(job_id: str):
 
 def process_upload(job_id: str):
     """Full pipeline: uploaded file → audio → transcript → summary."""
+    from app.services import summarize as sm_svc
+    from app.services import transcribe as tr_svc
+
     log.info("upload_job_start", job_id=job_id)
     converted_path = None
 
