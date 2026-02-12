@@ -10,6 +10,9 @@
   let username = localStorage.getItem("username") || "";
   let currentJobId = null;
   let pollTimer = null;
+  let pollDelayMs = 2000;
+  let lastProgress = null;
+  let pollFailureCount = 0;
   let currentTab = "youtube"; // youtube | upload
   let authMode = "login";     // login | register
 
@@ -278,12 +281,19 @@
   // ── Polling ────────────────────────────────────────────────────────────
   function startPolling(jobId) {
     stopPolling();
-    pollTimer = setInterval(() => pollJob(jobId), 2000);
+    pollDelayMs = 2000;
+    lastProgress = null;
+    pollFailureCount = 0;
+    scheduleNextPoll(jobId);
   }
 
   function stopPolling() {
-    if (pollTimer) clearInterval(pollTimer);
+    if (pollTimer) clearTimeout(pollTimer);
     pollTimer = null;
+  }
+
+  function scheduleNextPoll(jobId) {
+    pollTimer = setTimeout(() => pollJob(jobId), pollDelayMs);
   }
 
   async function pollJob(jobId) {
@@ -295,6 +305,7 @@
         return;
       }
       const data = await res.json();
+      pollFailureCount = 0;
       showJobCard(jobId, data.status, data.progress);
 
       if (data.status === "done") {
@@ -305,10 +316,22 @@
         const msg = data.error?.message || "Processing failed";
         showError(msg);
         retryJobBtn.classList.toggle("hidden", !data.error?.retryable);
+      } else {
+        if (typeof data.progress === "number" && (lastProgress === null || data.progress > lastProgress)) {
+          pollDelayMs = 2000;
+        } else {
+          pollDelayMs = Math.min(Math.round(pollDelayMs * 1.5), 15000);
+        }
+        lastProgress = data.progress;
+        scheduleNextPoll(jobId);
       }
     } catch (err) {
-      stopPolling();
-      showError("Connection error: " + err.message);
+      pollFailureCount += 1;
+      pollDelayMs = Math.min(Math.round(pollDelayMs * 1.5), 20000);
+      if (pollFailureCount >= 3) {
+        showError("Connection error: " + err.message);
+      }
+      scheduleNextPoll(jobId);
     }
   }
 

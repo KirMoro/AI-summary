@@ -239,6 +239,9 @@ rq worker --url redis://localhost:6379/0 default
 | `AUTH_RATE_LIMIT_PER_MINUTE` | Лимит auth-запросов/мин/IP | `20` |
 | `JOB_SUBMIT_RATE_LIMIT_PER_MINUTE` | Лимит submit/retry/мин/IP | `30` |
 | `JOB_MAX_RETRIES` | Авто-retry задач в RQ | `2` |
+| `JOB_RETENTION_HOURS` | Хранение done/error задач (часы) | `168` |
+| `RETENTION_CLEANUP_INTERVAL_SECONDS` | Интервал cleanup в worker (сек) | `1800` |
+| `RETENTION_CLEANUP_BATCH_SIZE` | Размер batch удаления старых задач | `200` |
 
 ## Тесты
 

@@ -6,7 +6,7 @@ import os
 import re
 import tempfile
 import traceback
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import structlog
 from redis import Redis
@@ -124,6 +124,15 @@ def _classify_error(exc: Exception) -> dict:
             "retryable": True,
             "user_message": "Processing timed out. Please retry.",
         }
+    if "ffmpeg conversion failed" in low:
+        return {
+            "code": "invalid_media_input",
+            "retryable": False,
+            "user_message": (
+                "Could not decode this media file. "
+                "Please upload a valid audio/video format (mp3, m4a, wav, mp4, mov)."
+            ),
+        }
     return {
         "code": "processing_failed",
         "retryable": False,
@@ -142,6 +151,59 @@ def _job_error_payload(exc: Exception) -> dict:
     }
 
 
+def _maybe_run_retention_cleanup() -> None:
+    """Periodically remove old completed/failed jobs and normalize upload blob TTLs."""
+    conn = Redis.from_url(settings.redis_url)
+    lock_key = "maintenance:retention_cleanup_lock"
+    got_lock = conn.set(
+        lock_key,
+        "1",
+        nx=True,
+        ex=max(60, settings.retention_cleanup_interval_seconds),
+    )
+    if not got_lock:
+        return
+
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=settings.job_retention_hours)
+
+    db = SessionLocal()
+    try:
+        stale_jobs = (
+            db.query(Job)
+            .filter(
+                Job.created_at < cutoff,
+                Job.status.in_(["done", "error"]),
+            )
+            .limit(settings.retention_cleanup_batch_size)
+            .all()
+        )
+        removed = 0
+        for job in stale_jobs:
+            db.delete(job)
+            removed += 1
+        if removed:
+            db.commit()
+            log.info("retention_cleanup_jobs_removed", removed=removed)
+
+        # Safety: ensure any upload blobs missing TTL are expired.
+        cursor = 0
+        normalized = 0
+        while True:
+            cursor, keys = conn.scan(cursor=cursor, match="upload_blob:*", count=100)
+            for key in keys:
+                ttl = conn.ttl(key)
+                if ttl is not None and ttl < 0:
+                    conn.expire(key, settings.upload_blob_ttl_seconds)
+                    normalized += 1
+            if cursor == 0:
+                break
+        if normalized:
+            log.info("retention_cleanup_blob_ttl_normalized", normalized=normalized)
+    finally:
+        db.close()
+
+
 # ── YouTube task ─────────────────────────────────────────────────────────────
 
 
@@ -155,6 +217,7 @@ def process_youtube(job_id: str):
     audio_path = None
 
     try:
+        _maybe_run_retention_cleanup()
         _update_job(job_id, status="running", progress=5)
 
         # 1. Load job from DB
@@ -251,6 +314,7 @@ def process_upload(job_id: str):
     converted_path = None
 
     try:
+        _maybe_run_retention_cleanup()
         _update_job(job_id, status="running", progress=5)
 
         # 1. Load job

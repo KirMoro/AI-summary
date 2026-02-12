@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     rq_queue_name: str = "default"
     job_timeout: int = 1800  # 30 min
     job_max_retries: int = 2
+    job_retention_hours: int = 168  # keep done/error jobs for 7 days
+    retention_cleanup_interval_seconds: int = 1800
+    retention_cleanup_batch_size: int = 200
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 
