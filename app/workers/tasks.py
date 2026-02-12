@@ -1,0 +1,233 @@
+"""RQ background tasks for YouTube & upload processing."""
+
+from __future__ import annotations
+
+import os
+import traceback
+from datetime import datetime, timezone
+
+import structlog
+
+from app.config import settings
+from app.db.database import SessionLocal
+from app.db.models import Job
+from app.services import youtube as yt_svc
+from app.services import transcribe as tr_svc
+from app.services import summarize as sm_svc
+
+log = structlog.get_logger()
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+
+def _update_job(job_id: str, **kwargs):
+    """Update job fields in the database."""
+    db = SessionLocal()
+    try:
+        job = db.query(Job).filter(Job.id == job_id).first()
+        if not job:
+            return
+        for k, v in kwargs.items():
+            setattr(job, k, v)
+        job.updated_at = datetime.now(timezone.utc)
+        db.commit()
+    finally:
+        db.close()
+
+
+def _make_progress_cb(job_id: str):
+    """Return a callback that updates job progress."""
+    def cb(pct: int):
+        _update_job(job_id, progress=pct)
+    return cb
+
+
+def _safe_remove(path: str):
+    try:
+        if path and os.path.exists(path):
+            os.unlink(path)
+    except OSError:
+        pass
+
+
+# ── YouTube task ─────────────────────────────────────────────────────────────
+
+
+def process_youtube(job_id: str):
+    """Full pipeline: YouTube URL → captions/audio → transcript → summary."""
+    log.info("youtube_job_start", job_id=job_id)
+    audio_path = None
+
+    try:
+        _update_job(job_id, status="running", progress=5)
+
+        # 1. Load job from DB
+        db = SessionLocal()
+        job = db.query(Job).filter(Job.id == job_id).first()
+        if not job:
+            log.error("job_not_found", job_id=job_id)
+            return
+        url = job.source_meta.get("url", "")
+        summary_style = job.summary_style or "medium"
+        language = job.language or "auto"
+        db.close()
+
+        # 2. Metadata
+        meta = yt_svc.get_metadata(url)
+        _update_job(job_id, source_meta=meta.to_dict(), progress=10)
+        log.info("metadata_fetched", title=meta.title)
+
+        # 3. Try captions
+        captions = yt_svc.get_captions(url, language)
+
+        if captions and captions.text.strip():
+            log.info("captions_found", lang=captions.language, length=len(captions.text))
+            _update_job(job_id, progress=30)
+
+            transcript_data = {
+                "text": captions.text,
+                "segments": captions.segments,
+                "language": captions.language,
+                "source": "captions",
+            }
+            detected_lang = captions.language
+        else:
+            # 4. Download audio
+            log.info("no_captions_downloading_audio", url=url)
+            _update_job(job_id, progress=15)
+
+            audio_path = yt_svc.download_audio(url)
+            log.info("audio_downloaded", path=audio_path)
+            _update_job(job_id, progress=25)
+
+            # 5. Transcribe
+            result = tr_svc.transcribe_file(
+                audio_path, on_progress=_make_progress_cb(job_id)
+            )
+            transcript_data = {
+                "text": result.text,
+                "segments": result.segments,
+                "language": result.language,
+                "source": "asr",
+            }
+            detected_lang = result.language
+
+        # 6. Save transcript
+        _update_job(job_id, transcript=transcript_data, progress=80)
+
+        # 7. Summarize
+        log.info("summarizing", style=summary_style, lang=language)
+        _update_job(job_id, progress=85)
+
+        summary = sm_svc.generate_summary(
+            text=transcript_data["text"],
+            style=summary_style,
+            language=language,
+            segments=transcript_data.get("segments"),
+            detected_language=detected_lang,
+        )
+
+        # 8. Done
+        _update_job(job_id, summary=summary, status="done", progress=100)
+        log.info("youtube_job_done", job_id=job_id)
+
+    except Exception as exc:
+        log.error("youtube_job_error", job_id=job_id, error=str(exc),
+                  traceback=traceback.format_exc())
+        _update_job(
+            job_id,
+            status="error",
+            error={"message": str(exc), "detail": traceback.format_exc()[:2000]},
+        )
+    finally:
+        _safe_remove(audio_path)
+
+
+# ── Upload task ──────────────────────────────────────────────────────────────
+
+
+def process_upload(job_id: str):
+    """Full pipeline: uploaded file → audio → transcript → summary."""
+    log.info("upload_job_start", job_id=job_id)
+    converted_path = None
+
+    try:
+        _update_job(job_id, status="running", progress=5)
+
+        # 1. Load job
+        db = SessionLocal()
+        job = db.query(Job).filter(Job.id == job_id).first()
+        if not job:
+            log.error("job_not_found", job_id=job_id)
+            return
+        tmp_path = job.source_meta.get("tmp_path", "")
+        summary_style = job.summary_style or "medium"
+        language = job.language or "auto"
+        db.close()
+
+        if not tmp_path or not os.path.exists(tmp_path):
+            raise FileNotFoundError(f"Uploaded file not found: {tmp_path}")
+
+        _update_job(job_id, progress=15)
+
+        # 2. Transcribe (handles conversion internally)
+        log.info("transcribing_upload", path=tmp_path)
+        result = tr_svc.transcribe_file(
+            tmp_path, on_progress=_make_progress_cb(job_id)
+        )
+
+        transcript_data = {
+            "text": result.text,
+            "segments": result.segments,
+            "language": result.language,
+            "source": "asr",
+        }
+
+        # 3. Save transcript
+        _update_job(job_id, transcript=transcript_data, progress=80)
+
+        # 4. Summarize
+        log.info("summarizing_upload", style=summary_style, lang=language)
+        _update_job(job_id, progress=85)
+
+        summary = sm_svc.generate_summary(
+            text=transcript_data["text"],
+            style=summary_style,
+            language=language,
+            segments=transcript_data.get("segments"),
+            detected_language=result.language,
+        )
+
+        # 5. Done — remove tmp_path from source_meta (don't expose internal paths)
+        clean_meta = {
+            "filename": job.source_meta.get("filename"),
+            "size_bytes": job.source_meta.get("size_bytes"),
+        }
+        _update_job(
+            job_id,
+            source_meta=clean_meta,
+            summary=summary,
+            status="done",
+            progress=100,
+        )
+        log.info("upload_job_done", job_id=job_id)
+
+    except Exception as exc:
+        log.error("upload_job_error", job_id=job_id, error=str(exc),
+                  traceback=traceback.format_exc())
+        _update_job(
+            job_id,
+            status="error",
+            error={"message": str(exc), "detail": traceback.format_exc()[:2000]},
+        )
+    finally:
+        # Cleanup uploaded file
+        try:
+            db = SessionLocal()
+            job = db.query(Job).filter(Job.id == job_id).first()
+            if job and job.source_meta:
+                _safe_remove(job.source_meta.get("tmp_path"))
+            db.close()
+        except Exception:
+            pass

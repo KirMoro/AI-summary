@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Summary — YouTube / File → Transcript + Summary</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <!-- ─── Auth Screen ────────────────────────────────────────────── -->
+  <div id="auth-screen" class="screen">
+    <div class="auth-container">
+      <div class="logo">⚡ AI Summary</div>
+      <p class="tagline">YouTube & Audio → Transcript + Summary</p>
+
+      <div class="tabs auth-tabs">
+        <button class="tab active" data-tab="login">Login</button>
+        <button class="tab" data-tab="register">Register</button>
+      </div>
+
+      <form id="auth-form" autocomplete="off">
+        <div class="field">
+          <label for="auth-username">Username</label>
+          <input id="auth-username" type="text" required minlength="3" maxlength="64" placeholder="your_username">
+        </div>
+        <div class="field">
+          <label for="auth-password">Password</label>
+          <input id="auth-password" type="password" required minlength="6" maxlength="128" placeholder="••••••••">
+        </div>
+        <button type="submit" class="btn primary" id="auth-submit">Login</button>
+        <div id="auth-error" class="error-msg hidden"></div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ─── Main App ───────────────────────────────────────────────── -->
+  <div id="app-screen" class="screen hidden">
+    <header>
+      <div class="header-left">
+        <span class="logo-sm">⚡ AI Summary</span>
+      </div>
+      <div class="header-right">
+        <span id="user-label" class="user-label"></span>
+        <button class="btn ghost" id="logout-btn">Logout</button>
+      </div>
+    </header>
+
+    <main>
+      <!-- ── Input Card ─────────────────────────────────────────── -->
+      <div class="card input-card">
+        <div class="tabs input-tabs">
+          <button class="tab active" data-tab="youtube">YouTube URL</button>
+          <button class="tab" data-tab="upload">Upload File</button>
+        </div>
+
+        <div id="panel-youtube" class="tab-panel">
+          <div class="field">
+            <label for="yt-url">YouTube URL</label>
+            <input id="yt-url" type="url" placeholder="https://www.youtube.com/watch?v=..." required>
+          </div>
+        </div>
+
+        <div id="panel-upload" class="tab-panel hidden">
+          <div class="field">
+            <label>Audio / Video File <span id="max-size-hint" class="hint"></span></label>
+            <div class="drop-zone" id="drop-zone">
+              <input id="file-input" type="file" accept="audio/*,video/*,.mp3,.mp4,.m4a,.wav,.ogg,.webm,.flac,.mkv,.mov">
+              <p class="drop-text">Drag & drop or <span class="link">browse</span></p>
+              <p class="file-name hidden" id="file-name"></p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Shared controls -->
+        <div class="controls-row">
+          <div class="field compact">
+            <label>Style</label>
+            <div class="seg-control" id="style-control">
+              <button class="seg" data-val="short">Short</button>
+              <button class="seg active" data-val="medium">Medium</button>
+              <button class="seg" data-val="detailed">Detailed</button>
+            </div>
+          </div>
+          <div class="field compact">
+            <label>Language</label>
+            <div class="seg-control" id="lang-control">
+              <button class="seg active" data-val="auto">Auto</button>
+              <button class="seg" data-val="ru">RU</button>
+              <button class="seg" data-val="en">EN</button>
+            </div>
+          </div>
+        </div>
+
+        <button class="btn primary full" id="start-btn">▶ Start Processing</button>
+      </div>
+
+      <!-- ── Job Status Card ────────────────────────────────────── -->
+      <div class="card job-card hidden" id="job-card">
+        <div class="job-header">
+          <span class="job-id" id="job-id-label"></span>
+          <span class="job-status" id="job-status-label"></span>
+        </div>
+        <div class="progress-bar">
+          <div class="progress-fill" id="progress-fill"></div>
+        </div>
+        <p class="progress-text" id="progress-text">0%</p>
+      </div>
+
+      <!-- ── Error Card ─────────────────────────────────────────── -->
+      <div class="card error-card hidden" id="error-card">
+        <div class="error-header">❌ Error</div>
+        <p id="error-message"></p>
+      </div>
+
+      <!-- ── Results Card ───────────────────────────────────────── -->
+      <div class="card result-card hidden" id="result-card">
+        <div class="result-actions">
+          <button class="btn ghost sm" id="copy-summary-btn">Copy Summary</button>
+          <button class="btn ghost sm" id="copy-transcript-btn">Copy Transcript</button>
+          <button class="btn ghost sm" id="download-json-btn">Download JSON</button>
+        </div>
+
+        <section class="result-section" id="section-tldr">
+          <h3>TL;DR</h3>
+          <p id="tldr-text"></p>
+        </section>
+
+        <section class="result-section" id="section-keypoints">
+          <h3>Key Points</h3>
+          <ul id="keypoints-list"></ul>
+        </section>
+
+        <section class="result-section" id="section-outline">
+          <h3>Outline</h3>
+          <div id="outline-content"></div>
+        </section>
+
+        <section class="result-section" id="section-actions">
+          <h3>Action Items</h3>
+          <ul id="actions-list"></ul>
+        </section>
+
+        <section class="result-section" id="section-timestamps">
+          <h3>Timestamps</h3>
+          <div id="timestamps-list"></div>
+        </section>
+
+        <section class="result-section">
+          <button class="accordion-toggle" id="transcript-toggle">
+            <span class="arrow">▸</span> Transcript
+          </button>
+          <div class="accordion-body hidden" id="transcript-body">
+            <pre id="transcript-text"></pre>
+          </div>
+        </section>
+      </div>
+
+      <!-- ── History ────────────────────────────────────────────── -->
+      <div class="card history-card" id="history-card">
+        <h3>Recent Jobs</h3>
+        <div id="history-list" class="history-list"></div>
+        <p class="empty-history hidden" id="empty-history">No recent jobs</p>
+      </div>
+    </main>
+
+    <!-- Toast -->
+    <div id="toast" class="toast hidden"></div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
