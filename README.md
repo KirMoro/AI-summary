@@ -230,6 +230,7 @@ rq worker --url redis://localhost:6379/0 default
 | `SUMMARY_MODEL` | Модель саммари | `gpt-4o-mini` |
 | `MAX_UPLOAD_MB` | Макс. размер файла | `250` |
 | `MAX_AUDIO_CHUNK_SECONDS` | Макс. длина чанка аудио (сек) | `1300` |
+| `UPLOAD_BLOB_TTL_SECONDS` | TTL upload-блоба в Redis (сек) | `3600` |
 | `YTDLP_COOKIES_PATH` | Путь к cookies.txt для yt-dlp | `""` |
 | `YTDLP_COOKIES_B64` | base64-содержимое cookies.txt | `""` |
 | `YTDLP_PLAYER_CLIENT` | youtube player_client для yt-dlp | `android` |

@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import os
 import re
+import tempfile
 import traceback
 from datetime import datetime, timezone
 
 import structlog
+from redis import Redis
 
+from app.config import settings
 from app.db.database import SessionLocal
 from app.db.models import Job
 
@@ -80,6 +83,17 @@ def _estimate_segments_from_text(text: str, duration_seconds: float) -> list[dic
         })
 
     return segments
+
+
+def _restore_upload_from_redis(blob_key: str, ext_hint: str = ".bin") -> str:
+    conn = Redis.from_url(settings.redis_url)
+    data = conn.get(blob_key)
+    if not data:
+        raise FileNotFoundError(f"Upload blob is missing in Redis: {blob_key}")
+    tmp_path = os.path.join(tempfile.gettempdir(), f"restored_{blob_key.split(':')[-1]}{ext_hint}")
+    with open(tmp_path, "wb") as f:
+        f.write(data)
+    return tmp_path
 
 
 def _classify_error(exc: Exception) -> dict:
@@ -246,11 +260,17 @@ def process_upload(job_id: str):
             log.error("job_not_found", job_id=job_id)
             return
         tmp_path = job.source_meta.get("tmp_path", "")
+        redis_blob_key = job.source_meta.get("redis_blob_key", "")
         summary_style = job.summary_style or "medium"
         language = job.language or "auto"
+        filename = (job.source_meta or {}).get("filename", "")
         db.close()
 
-        if not tmp_path or not os.path.exists(tmp_path):
+        if (not tmp_path or not os.path.exists(tmp_path)) and redis_blob_key:
+            ext = os.path.splitext(filename)[1] if filename else ".bin"
+            tmp_path = _restore_upload_from_redis(redis_blob_key, ext)
+            log.info("upload_restored_from_redis", job_id=job_id, key=redis_blob_key)
+        elif not tmp_path or not os.path.exists(tmp_path):
             raise FileNotFoundError(f"Uploaded file not found: {tmp_path}")
 
         _update_job(job_id, progress=15)
@@ -321,6 +341,9 @@ def process_upload(job_id: str):
             job = db.query(Job).filter(Job.id == job_id).first()
             if job and job.source_meta:
                 _safe_remove(job.source_meta.get("tmp_path"))
+                blob_key = job.source_meta.get("redis_blob_key")
+                if blob_key:
+                    Redis.from_url(settings.redis_url).delete(blob_key)
             db.close()
         except Exception:
             pass

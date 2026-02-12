@@ -5,6 +5,7 @@ import uuid
 import tempfile
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from redis import Redis
 from sqlalchemy.orm import Session
 
 from app.api.rate_limit import rate_limit
@@ -44,6 +45,9 @@ def upload_file(
     tmp_dir = tempfile.gettempdir()
     safe_name = f"{uuid.uuid4().hex}{ext}"
     tmp_path = os.path.join(tmp_dir, safe_name)
+    redis_blob_key = f"upload_blob:{safe_name}"
+    redis_conn = Redis.from_url(settings.redis_url)
+    redis_conn.delete(redis_blob_key)
 
     size = 0
     max_bytes = settings.max_upload_mb * 1024 * 1024
@@ -53,8 +57,11 @@ def upload_file(
             if size > max_bytes:
                 f.close()
                 os.unlink(tmp_path)
+                redis_conn.delete(redis_blob_key)
                 raise HTTPException(413, f"File too large. Max {settings.max_upload_mb} MB.")
             f.write(chunk)
+            redis_conn.append(redis_blob_key, chunk)
+    redis_conn.expire(redis_blob_key, settings.upload_blob_ttl_seconds)
 
     job = Job(
         user_id=user.id,
@@ -63,6 +70,7 @@ def upload_file(
             "filename": file.filename,
             "size_bytes": size,
             "tmp_path": tmp_path,
+            "redis_blob_key": redis_blob_key,
         },
         summary_style=summary_style,
         language=language,
