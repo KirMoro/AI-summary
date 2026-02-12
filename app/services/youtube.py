@@ -13,11 +13,14 @@ from typing import Optional
 
 import structlog
 from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api._errors import (
-    NoTranscriptFound,
-    TranscriptsDisabled,
-    NoTranscriptAvailable,
-)
+from youtube_transcript_api._errors import NoTranscriptFound, TranscriptsDisabled
+
+try:
+    # Present in some youtube-transcript-api versions
+    from youtube_transcript_api._errors import NoTranscriptAvailable
+    _NO_TRANSCRIPT_ERRORS = (TranscriptsDisabled, NoTranscriptAvailable)
+except ImportError:
+    _NO_TRANSCRIPT_ERRORS = (TranscriptsDisabled,)
 
 log = structlog.get_logger()
 
@@ -110,7 +113,7 @@ def get_captions(url: str, preferred_lang: str = "auto") -> Optional[CaptionResu
 
     try:
         transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-    except (TranscriptsDisabled, NoTranscriptAvailable, Exception) as exc:
+    except _NO_TRANSCRIPT_ERRORS + (Exception,) as exc:
         log.info("no_transcripts_available", video_id=video_id, reason=str(exc))
         return None
 
