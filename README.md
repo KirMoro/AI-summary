@@ -164,6 +164,11 @@ Railway автоматически создаст `REDIS_URL`.
 
 Формат: `postgresql://postgres.XXXX:PASSWORD@aws-0-REGION.pooler.supabase.com:6543/postgres`
 
+Важно:
+- Для `*.pooler.supabase.com` используй пользователя вида `postgres.<project_ref>`, не просто `postgres`.
+- Если пароль содержит спецсимволы (`@`, `:`, `/`, `#`, `%`) — он должен быть URL-encoded.
+- В коде есть автонормализация пароля, но в переменной окружения лучше хранить уже валидный URI.
+
 Найти: Supabase Dashboard → Settings → Database → Connection string → URI (Transaction pooler, порт 6543).
 
 ### 4. Deploy
