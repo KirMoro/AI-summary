@@ -71,21 +71,22 @@ def _convert_to_mp3(input_path: str) -> str:
     return out_path
 
 
-def _split_audio(path: str, max_mb: int = 24) -> list[str]:
-    """Split audio into chunks ≤ max_mb each. Returns list of file paths."""
+def _split_audio(path: str, max_mb: int = 24, max_seconds: int = 1300) -> list[str]:
+    """Split audio into chunks respecting both size and duration limits."""
     file_size = os.path.getsize(path)
     max_bytes = max_mb * 1024 * 1024
+    duration = _get_duration(path)
 
-    if file_size <= max_bytes:
+    if file_size <= max_bytes and (duration <= 0 or duration <= max_seconds):
         return [path]
 
-    duration = _get_duration(path)
     if duration <= 0:
         return [path]  # can't split, hope for the best
 
-    # Calculate segment duration to fit under max_bytes
+    # Calculate segment duration to fit under max_bytes and model max_seconds.
     bytes_per_sec = file_size / duration
-    segment_secs = int(max_bytes / bytes_per_sec * 0.9)  # 10% safety margin
+    segment_secs_by_size = int(max_bytes / bytes_per_sec * 0.9) if bytes_per_sec > 0 else max_seconds
+    segment_secs = min(segment_secs_by_size, max_seconds)
     segment_secs = max(segment_secs, 60)  # at least 1 minute
 
     num_chunks = math.ceil(duration / segment_secs)
@@ -137,7 +138,11 @@ def transcribe_file(
     mp3_path = _convert_to_mp3(file_path)
 
     # 2. Split if needed
-    chunks = _split_audio(mp3_path, settings.max_audio_chunk_mb)
+    chunks = _split_audio(
+        mp3_path,
+        settings.max_audio_chunk_mb,
+        settings.max_audio_chunk_seconds,
+    )
     total_chunks = len(chunks)
     log.info("transcription_start", chunks=total_chunks)
 

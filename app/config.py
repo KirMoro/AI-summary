@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     # --- Limits ---
     max_upload_mb: int = 250
     max_audio_chunk_mb: int = 24  # OpenAI limit ≈ 25 MB
+    max_audio_chunk_seconds: int = 1300  # keep below model hard-limit (1400s)
     cleanup_after_minutes: int = 30
 
     # --- Auth ---
