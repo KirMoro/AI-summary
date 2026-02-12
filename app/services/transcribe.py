@@ -151,31 +151,24 @@ def transcribe_file(
 
         with open(chunk_path, "rb") as audio_file:
             try:
-                response = client.audio.transcriptions.create(
-                    model=model,
-                    file=audio_file,
-                    response_format="verbose_json",
-                    timestamp_granularities=["segment"],
-                )
+                response = _transcribe_chunk(client, audio_file, model)
             except Exception as exc:
                 # Retry once
                 log.warning("transcription_retry", chunk=idx, error=str(exc))
                 audio_file.seek(0)
-                response = client.audio.transcriptions.create(
-                    model=model,
-                    file=audio_file,
-                    response_format="verbose_json",
-                    timestamp_granularities=["segment"],
-                )
+                response = _transcribe_chunk(client, audio_file, model)
 
-        all_text.append(response.text or "")
+        response_text = _resp_get(response, "text", "") or ""
+        all_text.append(response_text)
 
-        if hasattr(response, "language") and response.language:
-            detected_lang = response.language
+        response_language = _resp_get(response, "language")
+        if response_language:
+            detected_lang = response_language
 
         # Collect segments with time offset
-        if hasattr(response, "segments") and response.segments:
-            for seg in response.segments:
+        response_segments = _resp_get(response, "segments", [])
+        if response_segments:
+            for seg in response_segments:
                 all_segments.append({
                     "start": round((seg.get("start", 0) if isinstance(seg, dict) else getattr(seg, "start", 0)) + time_offset, 2),
                     "end": round((seg.get("end", 0) if isinstance(seg, dict) else getattr(seg, "end", 0)) + time_offset, 2),
@@ -209,3 +202,38 @@ def _safe_remove(path: str):
             os.unlink(path)
     except OSError:
         pass
+
+
+def _resp_get(obj, field: str, default=None):
+    if isinstance(obj, dict):
+        return obj.get(field, default)
+    return getattr(obj, field, default)
+
+
+def _transcribe_chunk(client: OpenAI, audio_file, model: str):
+    """
+    Prefer verbose_json for timestamps. Fallback to json if model doesn't support it.
+    """
+    try:
+        return client.audio.transcriptions.create(
+            model=model,
+            file=audio_file,
+            response_format="verbose_json",
+            timestamp_granularities=["segment"],
+        )
+    except Exception as exc:
+        msg = str(exc)
+        unsupported_verbose = (
+            "response_format 'verbose_json' is not compatible" in msg
+            or "unsupported_value" in msg
+        )
+        if not unsupported_verbose:
+            raise
+
+        log.warning("transcription_format_fallback", model=model, fallback="json")
+        audio_file.seek(0)
+        return client.audio.transcriptions.create(
+            model=model,
+            file=audio_file,
+            response_format="json",
+        )
