@@ -315,6 +315,7 @@
       if (!res.ok) throw new Error("Failed to fetch result");
       const data = await res.json();
 
+      currentJobId = jobId;
       lastResult = data;
       lastSource = sourceMeta;
       renderResult(data, sourceMeta);
@@ -475,6 +476,34 @@
       URL.revokeObjectURL(url);
       toast("JSON downloaded!", "success");
     });
+
+    $("#download-md-btn").addEventListener("click", async () => {
+      if (!currentJobId) return;
+      try {
+        const res = await apiFetch(`/v1/jobs/${currentJobId}/result.md`);
+        if (!res.ok) throw new Error("Failed to download Markdown");
+
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        const filename = getFileNameFromContentDisposition(
+          res.headers.get("Content-Disposition")
+        ) || `ai-summary-${currentJobId}.md`;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+        toast("Markdown downloaded!", "success");
+      } catch (err) {
+        showError(err.message);
+      }
+    });
+  }
+
+  function getFileNameFromContentDisposition(headerValue) {
+    if (!headerValue) return "";
+    const m = /filename="([^"]+)"/i.exec(headerValue);
+    return m ? m[1] : "";
   }
 
   function copyToClipboard(text) {

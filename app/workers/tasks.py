@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import traceback
 from datetime import datetime, timezone
 
@@ -45,6 +46,40 @@ def _safe_remove(path: str):
             os.unlink(path)
     except OSError:
         pass
+
+
+def _estimate_segments_from_text(text: str, duration_seconds: float) -> list[dict]:
+    """
+    Build approximate segments when ASR backend doesn't return timestamps.
+    This keeps downstream timestamp UX useful for upload jobs.
+    """
+    if not text or duration_seconds <= 0:
+        return []
+
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+    if not sentences:
+        return []
+
+    segment_count = min(max(6, len(sentences) // 3), 40)
+    segment_count = max(1, segment_count)
+    step = max(1, (len(sentences) + segment_count - 1) // segment_count)
+
+    segments = []
+    groups = [sentences[i : i + step] for i in range(0, len(sentences), step)]
+    total_groups = len(groups)
+    if total_groups == 0:
+        return []
+
+    for idx, group in enumerate(groups):
+        start = round(duration_seconds * idx / total_groups, 2)
+        end = round(duration_seconds * (idx + 1) / total_groups, 2)
+        segments.append({
+            "start": start,
+            "end": end,
+            "text": " ".join(group),
+        })
+
+    return segments
 
 
 # ── YouTube task ─────────────────────────────────────────────────────────────
@@ -186,6 +221,15 @@ def process_upload(job_id: str):
             "language": result.language,
             "source": "asr",
         }
+
+        # Some models return plain JSON without segments.
+        # Generate approximate segments from text + media duration as a fallback.
+        if not transcript_data.get("segments"):
+            duration_seconds = tr_svc._get_duration(tmp_path)
+            estimated = _estimate_segments_from_text(result.text, duration_seconds)
+            if estimated:
+                transcript_data["segments"] = estimated
+                transcript_data["source"] = "asr_estimated_segments"
 
         # 3. Save transcript
         _update_job(job_id, transcript=transcript_data, progress=80)

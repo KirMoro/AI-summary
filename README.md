@@ -133,6 +133,13 @@ curl https://YOUR-APP.up.railway.app/v1/jobs/JOB_ID/result \
 #   }
 ```
 
+```bash
+# Скачать результат в Markdown
+curl https://YOUR-APP.up.railway.app/v1/jobs/JOB_ID/result.md \
+  -H "X-API-Key: YOUR_API_KEY" \
+  -o ai-summary-result.md
+```
+
 ## Деплой на Railway
 
 ### 1. GitHub → Railway
