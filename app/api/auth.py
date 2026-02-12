@@ -17,7 +17,8 @@ router = APIRouter(prefix="/v1/auth", tags=["auth"])
 
 class AuthRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=64)
-    password: str = Field(..., min_length=6, max_length=128)
+    # bcrypt uses first 72 bytes; keep strict limit to avoid silent truncation.
+    password: str = Field(..., min_length=6, max_length=72)
 
 
 class AuthResponse(BaseModel):

@@ -6,6 +6,8 @@ redis>=5.0.0
 rq>=1.16.0
 python-multipart>=0.0.9
 passlib[bcrypt]>=1.7.4
+# passlib 1.7.x is incompatible with bcrypt>=4.1.x (__about__ removed).
+bcrypt==4.0.1
 openai>=1.50.0
 yt-dlp>=2024.11.0
 youtube-transcript-api>=0.6.2
